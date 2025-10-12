@@ -53,7 +53,7 @@ const GIFS = [
 ];
 
 // Random reaction GIFs
-const REACTION_GIFS = GIFS.slice(0, 8);
+const REACTION_GIFS = GIFS.slice(0, 5);
 
 const useCurrentUser = () => {
     const [currentUser, setCurrentUser] = useState(null);
@@ -93,11 +93,18 @@ function GifSelector({ selectedGif, onSelect }) {
     );
 }
 
-function PostForm({ categoryId, parentId = null, onPostCreated }) {
+function PostForm({ categoryId, parentId = null, onPostCreated, replyingTo }) {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [selectedGif, setSelectedGif] = useState(GIFS[0]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+      // Pre-fill reply content if replying to someone
+      if (replyingTo) {
+          setContent(`@${replyingTo.username} `);
+      }
+  }, [replyingTo]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -106,7 +113,7 @@ function PostForm({ categoryId, parentId = null, onPostCreated }) {
     setIsSubmitting(true);
     try {
       await room.collection('post_v2').create({
-        title: parentId ? `Re: ${parentId}` : title.trim(),
+        title: parentId ? null : title.trim(),
         content: content.trim(),
         gif: selectedGif,
         categoryId: categoryId,
@@ -125,8 +132,8 @@ function PostForm({ categoryId, parentId = null, onPostCreated }) {
   };
 
   return (
-    <form className="post-form" onSubmit={handleSubmit}>
-      <h2 style={{ marginBottom: '20px' }}>
+    <form className="form-container" onSubmit={handleSubmit}>
+      <h2>
         {parentId ? "Post a Reply" : "Create a New Thread"}
       </h2>
       
@@ -158,7 +165,7 @@ function PostForm({ categoryId, parentId = null, onPostCreated }) {
         <GifSelector selectedGif={selectedGif} onSelect={setSelectedGif} />
       </div>
 
-      <button type="submit" className="submit-btn" disabled={isSubmitting}>
+      <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
         {isSubmitting ? 'Posting...' : (parentId ? 'Post Reply' : 'Create Thread')}
       </button>
     </form>
@@ -170,10 +177,9 @@ function PostCard({ post, onReplyClick, isOp = false }) {
     const [isEditing, setIsEditing] = useState(false);
     const [editedContent, setEditedContent] = useState(post.content);
 
-    const reactions = useSyncExternalStore(
-        room.collection('reaction_v2').filter({ post_id: post.id }).subscribe,
-        () => room.collection('reaction_v2').filter({ post_id: post.id }).getList()
-    );
+    const reactionsSub = useCallback(room.collection('reaction_v2').filter({ post_id: post.id }).subscribe, [post.id]);
+    const reactionsGet = useCallback(() => room.collection('reaction_v2').filter({ post_id: post.id }).getList(), [post.id]);
+    const reactions = useSyncExternalStore(reactionsSub, reactionsGet);
 
     const handleReaction = async (gifUrl) => {
         if (!currentUser) return;
@@ -194,12 +200,9 @@ function PostCard({ post, onReplyClick, isOp = false }) {
 
     const handleDelete = async () => {
         if (window.confirm('Are you sure you want to delete this post?')) {
-            // Also delete all reactions associated with this post.
             const postReactions = room.collection('reaction_v2').filter({ post_id: post.id }).getList();
             for (const reaction of postReactions) {
-                 if(reaction.username === currentUser.username) {
-                    await room.collection('reaction_v2').delete(reaction.id);
-                 }
+                 await room.collection('reaction_v2').delete(reaction.id);
             }
             await room.collection('post_v2').delete(post.id);
         }
@@ -241,8 +244,8 @@ function PostCard({ post, onReplyClick, isOp = false }) {
                 </div>
                 {isAuthor && !isEditing && (
                     <div className="post-card-actions">
-                        <button onClick={() => setIsEditing(true)}>Edit</button>
-                        <button onClick={handleDelete}>Delete</button>
+                        <button className="btn btn-subtle" onClick={() => setIsEditing(true)}>Edit</button>
+                        <button className="btn btn-subtle" onClick={handleDelete}>Delete</button>
                     </div>
                 )}
             </div>
@@ -252,8 +255,10 @@ function PostCard({ post, onReplyClick, isOp = false }) {
             {isEditing ? (
                 <div className="edit-area">
                     <textarea value={editedContent} onChange={(e) => setEditedContent(e.target.value)} />
-                    <button onClick={handleUpdate}>Save</button>
-                    <button onClick={() => setIsEditing(false)}>Cancel</button>
+                    <div className="edit-area-actions">
+                        <button className="btn btn-primary" onClick={handleUpdate}>Save</button>
+                        <button className="btn btn-secondary" onClick={() => setIsEditing(false)}>Cancel</button>
+                    </div>
                 </div>
             ) : (
                  <p className="post-content">{post.content}</p>
@@ -263,6 +268,7 @@ function PostCard({ post, onReplyClick, isOp = false }) {
                 {REACTION_GIFS.map((gif) => {
                     const count = getReactionCount(gif);
                     const active = hasUserReacted(gif);
+                    if (count === 0 && !active) return null;
                     return (
                         <button key={gif} className={`reaction-btn ${active ? 'active' : ''}`} onClick={() => handleReaction(gif)}>
                             <img src={gif} alt="Reaction" className="reaction-gif" />
@@ -270,8 +276,17 @@ function PostCard({ post, onReplyClick, isOp = false }) {
                         </button>
                     );
                 })}
-                 {!isOp && onReplyClick && (
-                    <button className="reply-btn" onClick={() => onReplyClick(post)}>
+                <div style={{ borderLeft: '1px solid #444', height: '24px', margin: '0 4px' }}></div>
+                {REACTION_GIFS.map(gif => {
+                     const active = hasUserReacted(gif);
+                     if (active) return null;
+                     return <button key={`add-${gif}`} className="reaction-btn" onClick={() => handleReaction(gif)}>
+                                <img src={gif} alt="Reaction" className="reaction-gif" />
+                            </button>
+                })}
+
+                {onReplyClick && (
+                    <button className="btn btn-secondary" style={{marginLeft: 'auto'}} onClick={() => onReplyClick(post)}>
                         Reply
                     </button>
                 )}
@@ -284,6 +299,13 @@ function CategoryForm({ category, onFormSubmit }) {
     const [title, setTitle] = useState(category ? category.title : '');
     const [selectedGif, setSelectedGif] = useState(category ? category.gif : GIFS[10]);
 
+    useEffect(() => {
+        if(category) {
+            setTitle(category.title);
+            setSelectedGif(category.gif);
+        }
+    }, [category]);
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (!title.trim()) return;
@@ -293,15 +315,24 @@ function CategoryForm({ category, onFormSubmit }) {
             await room.collection('category_v1').update(category.id, data);
         } else {
             await room.collection('category_v1').create(data);
+            setTitle('');
+            setSelectedGif(GIFS[10]);
         }
         onFormSubmit();
     };
 
     return (
-        <form onSubmit={handleSubmit} className="category-form">
-            <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Category Title" required />
-            <GifSelector selectedGif={selectedGif} onSelect={setSelectedGif} />
-            <button type="submit">{category ? 'Update' : 'Create'} Category</button>
+        <form onSubmit={handleSubmit} className="form-container">
+            <h2>{category ? 'Edit' : 'Create'} Category</h2>
+            <div className="form-group">
+                <label>Category Title</label>
+                <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Category Title" required />
+            </div>
+            <div className="form-group">
+                <label>Select an Icon</label>
+                <GifSelector selectedGif={selectedGif} onSelect={setSelectedGif} />
+            </div>
+            <button type="submit" className="btn btn-primary">{category ? 'Update' : 'Create'} Category</button>
         </form>
     );
 }
@@ -311,108 +342,131 @@ function CategoryList({ onSelectCategory }) {
         room.collection('category_v1').subscribe,
         room.collection('category_v1').getList
     );
-    const currentUser = useCurrentUser();
     const [showForm, setShowForm] = useState(false);
 
-    const handleDelete = async (categoryId) => {
-        if (window.confirm('Are you sure? This will delete all threads in this category.')) {
-            // Note: This is simplified. In a real app, you'd handle cascading deletes more robustly.
-            const postsInCategory = room.collection('post_v2').filter({ categoryId }).getList();
-            for (const post of postsInCategory) {
-                // This only allows user to delete their own posts when deleting a category
-                if(post.username === currentUser.username) {
-                    await room.collection('post_v2').delete(post.id);
-                }
-            }
+    const handleDelete = async (e, categoryId) => {
+        e.stopPropagation();
+        if (window.confirm('Are you sure? This will delete the category.')) {
+            // Note: Does not delete posts within, per API limitations.
             await room.collection('category_v1').delete(categoryId);
         }
     };
     
     return (
         <div className="category-list-container">
-            <h2>Categories</h2>
+            <div className="page-header">
+                <h2>Categories</h2>
+                <button className="btn btn-primary" onClick={() => setShowForm(!showForm)}>
+                    {showForm ? 'Cancel' : 'New Category'}
+                </button>
+            </div>
+
+            {showForm && <CategoryForm onFormSubmit={() => setShowForm(false)} />}
+            
             <div className="category-list">
                 {categories.map(cat => (
-                    <div key={cat.id} className="category-item">
-                        <div className="category-info" onClick={() => onSelectCategory(cat)}>
+                    <div key={cat.id} className="category-item" onClick={() => onSelectCategory(cat)}>
+                        <div className="item-info">
                             <img src={cat.gif} alt={cat.title} />
-                            <span>{cat.title}</span>
-                        </div>
-                        {currentUser && currentUser.username === cat.username && (
-                            <div className="category-actions">
-                                <button onClick={() => handleDelete(cat.id)}>Delete</button>
+                            <div className="item-info-text">
+                                <span className="title">{cat.title}</span>
                             </div>
-                        )}
+                        </div>
+                        <div className="item-actions">
+                            <button className="btn btn-danger" onClick={(e) => handleDelete(e, cat.id)}>Delete</button>
+                        </div>
                     </div>
                 ))}
             </div>
-            <button className="submit-btn" onClick={() => setShowForm(!showForm)}>
-                {showForm ? 'Cancel' : 'Create New Category'}
-            </button>
-            {showForm && <CategoryForm onFormSubmit={() => setShowForm(false)} />}
         </div>
     );
 }
 
 function ThreadList({ category, onSelectThread, onBack }) {
-    const threads = useSyncExternalStore(
-        room.collection('post_v2').filter({ categoryId: category.id, parentId: null }).subscribe,
-        () => room.collection('post_v2').filter({ categoryId: category.id, parentId: null }).getList()
-    );
+    const threadSubscribe = useCallback(room.collection('post_v2').filter({ categoryId: category.id, parentId: null }).subscribe, [category.id]);
+    const threadGet = useCallback(() => room.collection('post_v2').filter({ categoryId: category.id, parentId: null }).getList(), [category.id]);
+    const threads = useSyncExternalStore(threadSubscribe, threadGet);
+    const [showForm, setShowForm] = useState(false);
 
     const sortedThreads = [...threads].reverse();
 
     return (
         <div className="thread-list-container">
-            <button onClick={onBack} className="back-btn">‹ Back to Categories</button>
-            <h2>Threads in {category.title}</h2>
-            <div className="posts-list">
+            <div className="page-header">
+                 <button onClick={onBack} className="btn btn-secondary">‹ Back</button>
+                <h2>{category.title}</h2>
+                <button className="btn btn-primary" onClick={() => setShowForm(!showForm)}>
+                    {showForm ? 'Cancel' : 'New Thread'}
+                </button>
+            </div>
+            
+            {showForm && <PostForm categoryId={category.id} onPostCreated={() => setShowForm(false)} />}
+            
+            <div className="thread-list">
                 {sortedThreads.length > 0 ? (
                     sortedThreads.map(thread => (
                         <div key={thread.id} className="thread-item" onClick={() => onSelectThread(thread)}>
-                            <img src={thread.gif} className="thread-icon" />
-                            <div>
-                                <div className="thread-title">{thread.title}</div>
-                                <div className="thread-meta">by {thread.username} - {formatTime(thread.created_at)}</div>
+                            <div className="item-info">
+                                <img src={thread.gif} />
+                                <div className="item-info-text">
+                                    <div className="title">{thread.title}</div>
+                                    <div className="meta">by {thread.username} - {formatTime(thread.created_at)}</div>
+                                </div>
                             </div>
                         </div>
                     ))
-                ) : <p>No threads here yet. Why not create one?</p>}
+                ) : <p>No threads here yet. Be the first to create one!</p>}
             </div>
-            <PostForm categoryId={category.id} />
         </div>
     );
 }
 
 function ThreadView({ thread, onBack }) {
-    const allPosts = useSyncExternalStore(
-        room.collection('post_v2').subscribe,
-        room.collection('post_v2').getList
-    );
+    const postSubscribe = useCallback(room.collection('post_v2').subscribe, []);
+    const postGet = useCallback(room.collection('post_v2').getList, []);
+    const allPosts = useSyncExternalStore(postSubscribe, postGet);
     
     const [replyingTo, setReplyingTo] = useState(null);
 
     const threadPosts = allPosts.filter(p => p.id === thread.id || p.parentId === thread.id);
     const op = threadPosts.find(p => p.id === thread.id);
     const replies = threadPosts.filter(p => p.parentId === thread.id).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    
+    const handleReplyClick = (post) => {
+        setReplyingTo(post);
+        document.getElementById('reply-form').scrollIntoView({ behavior: 'smooth' });
+    };
 
     return (
         <div className="thread-view-container">
-            <button onClick={onBack} className="back-btn">‹ Back to Threads</button>
-            {op && <PostCard post={op} isOp={true} />}
-            <div className="replies-list">
-                <h3>Replies</h3>
-                {replies.map(reply => (
-                    <PostCard key={reply.id} post={reply} onReplyClick={() => setReplyingTo(reply)} />
-                ))}
+             <div className="page-header">
+                <button onClick={onBack} className="btn btn-secondary">‹ Back to Threads</button>
             </div>
-            {replyingTo && (
-                <div className="reply-indicator">
-                    Replying to {replyingTo.username}
-                    <button onClick={() => setReplyingTo(null)}>X</button>
+            {op && <PostCard post={op} isOp={true} />}
+            
+            {replies.length > 0 && (
+                <div className="replies-list">
+                    <h3>Replies ({replies.length})</h3>
+                    {replies.map(reply => (
+                        <PostCard key={reply.id} post={reply} onReplyClick={handleReplyClick} />
+                    ))}
                 </div>
             )}
-            <PostForm categoryId={thread.categoryId} parentId={thread.id} onPostCreated={() => setReplyingTo(null)} />
+            
+            <div id="reply-form" style={{marginTop: '30px'}}>
+                 {replyingTo && (
+                    <div className="reply-indicator">
+                        <span>Replying to <strong>{replyingTo.username}</strong></span>
+                        <button onClick={() => setReplyingTo(null)}>&times;</button>
+                    </div>
+                )}
+                <PostForm 
+                    categoryId={thread.categoryId} 
+                    parentId={thread.id} 
+                    onPostCreated={() => setReplyingTo(null)}
+                    replyingTo={replyingTo}
+                />
+            </div>
         </div>
     );
 }
@@ -456,14 +510,16 @@ function App() {
     
     return (
         <div className="container">
-            <div className="header">
+            <header className="header">
                  <img src="/asset_28 (1).gif" alt="Forum Logo" className="header-logo"/>
-                <h1>GIF Forum</h1>
-                <p>Where every conversation is animated</p>
-            </div>
-            <div className="main-content">
+                 <div className="header-text">
+                    <h1>GIF Forum</h1>
+                    <p>Where every conversation is animated</p>
+                 </div>
+            </header>
+            <main className="main-content">
                 {renderView()}
-            </div>
+            </main>
         </div>
     );
 }
