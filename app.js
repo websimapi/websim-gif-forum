@@ -171,9 +171,8 @@ function PostCard({ post, onReplyClick, isOp = false }) {
     const [editedContent, setEditedContent] = useState(post.content);
 
     const reactions = useSyncExternalStore(
-        () => room.collection('reaction_v2').filter({ post_id: post.id }).subscribe(),
-        () => room.collection('reaction_v2').filter({ post_id: post.id }).getList(),
-        [post.id]
+        room.collection('reaction_v2').filter({ post_id: post.id }).subscribe,
+        () => room.collection('reaction_v2').filter({ post_id: post.id }).getList()
     );
 
     const handleReaction = async (gifUrl) => {
@@ -357,9 +356,8 @@ function CategoryList({ onSelectCategory }) {
 
 function ThreadList({ category, onSelectThread, onBack }) {
     const threads = useSyncExternalStore(
-        () => room.collection('post_v2').filter({ categoryId: category.id, parentId: null }).subscribe(),
-        () => room.collection('post_v2').filter({ categoryId: category.id, parentId: null }).getList(),
-        [category.id]
+        room.collection('post_v2').filter({ categoryId: category.id, parentId: null }).subscribe,
+        () => room.collection('post_v2').filter({ categoryId: category.id, parentId: null }).getList()
     );
 
     const sortedThreads = [...threads].reverse();
